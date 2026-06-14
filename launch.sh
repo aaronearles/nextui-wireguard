@@ -6,11 +6,19 @@ PAK_DIR="$(dirname "$0")"
 SDCARD="${SDCARD_PATH:-/mnt/SDCARD}"
 CONF_DIR="$SDCARD/wireguard"
 STATE_FILE="/tmp/wg_pak_active"
+ENDPOINT_FILE="/tmp/wg_pak_endpoint"
+SETTINGS_FILE="$CONF_DIR/settings.json"
 WG_BIN="$PAK_DIR/bin/$PLATFORM/wg"
 WGGO_BIN="$PAK_DIR/bin/$PLATFORM/wireguard-go"
+MINUI_LIST="$PAK_DIR/bin/$PLATFORM/minui-list"
+MINUI_PRESENTER="$PAK_DIR/bin/$PLATFORM/minui-presenter"
+JQ="$PAK_DIR/bin/$PLATFORM/jq"
 LOG="${LOGS_PATH:+$LOGS_PATH/wireguard.log}"
-LOG="${LOG:-$SDCARD/wireguard/wireguard.log}"
-LOGO="$SDCARD/.system/res/logo.png"
+LOG="${LOG:-$CONF_DIR/wireguard.log}"
+MENU_INPUT="/tmp/wg_menu_in.json"
+MENU_OUTPUT="/tmp/wg_menu_out.json"
+
+export PATH="$PAK_DIR/bin/$PLATFORM:$PATH"
 
 log() {
     mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -19,22 +27,18 @@ log() {
 
 die() {
     log "FATAL: $*"
-    show_message "$*" 4
+    "$MINUI_PRESENTER" --message "$*" --timeout 4 2>/dev/null || true
     exit 1
 }
 
-# ---------------------------------------------------------------------------
-# UI — show2.elf is the display tool on this NextUI firmware
-# ---------------------------------------------------------------------------
-
 show_message() {
     msg="$1"
-    timeout="${2:-3}"
-    if command -v show2.elf >/dev/null 2>&1 && [ -f "$LOGO" ]; then
-        show2.elf --mode=simple --image="$LOGO" --text="$msg" --timeout="$timeout"
+    seconds="${2:-}"
+    killall minui-presenter >/dev/null 2>&1 || true
+    if [ -z "$seconds" ]; then
+        "$MINUI_PRESENTER" --message "$msg" --timeout -1 &
     else
-        echo "$msg" >&2
-        sleep "$timeout"
+        "$MINUI_PRESENTER" --message "$msg" --timeout "$seconds"
     fi
 }
 
@@ -44,25 +48,21 @@ show_message() {
 
 wg_up() {
     conf="$1"
+    tunnel_mode="$2"
     iface="wg0"
 
-    log "Connecting: $conf"
+    log "Connecting: $conf (tunnel=$tunnel_mode)"
 
-    # Parse wg-quick-only fields
     address=$(awk '/^\[Interface\]/,/^\[/' "$conf" | grep -i '^Address' | head -1 | cut -d= -f2 | tr -d ' ')
     dns=$(awk '/^\[Interface\]/,/^\[/' "$conf" | grep -i '^DNS' | head -1 | cut -d= -f2 | tr -d ' ')
+    endpoint=$(grep -i '^Endpoint' "$conf" | head -1 | cut -d= -f2 | tr -d ' ' | cut -d: -f1)
 
-    # Strip wg-quick-only keys (not valid wg(8) keys)
     tmpconf="/tmp/wg_stripped.conf"
     grep -iv '^\(Address\|DNS\|PreUp\|PostUp\|PreDown\|PostDown\)' "$conf" > "$tmpconf"
 
-    # Remove any stale interface from a previous failed run
     ip link delete "$iface" 2>/dev/null || true
-
-    # Start userspace WireGuard daemon (no kernel module required)
     "$WGGO_BIN" "$iface" 2>>"$LOG" &
 
-    # Wait up to 5s for the interface to appear
     i=0
     while [ "$i" -lt 5 ]; do
         ip link show "$iface" >/dev/null 2>&1 && break
@@ -72,36 +72,45 @@ wg_up() {
 
     if ! ip link show "$iface" >/dev/null 2>&1; then
         log "ERROR: wireguard-go did not create interface (tun support missing?)"
-        show_message "Failed to start WireGuard" 4
         return 1
     fi
 
     if ! "$WG_BIN" setconf "$iface" "$tmpconf" 2>>"$LOG"; then
         log "ERROR: wg setconf failed"
         ip link delete "$iface" 2>/dev/null
-        show_message "Failed to apply WG config" 4
         return 1
     fi
 
     [ -n "$address" ] && ip addr add "$address" dev "$iface" 2>>"$LOG"
-
     ip link set "$iface" up 2>>"$LOG"
 
-    # Add routes from AllowedIPs; skip default routes to preserve WiFi
-    while IFS= read -r line; do
-        case "$line" in
-            AllowedIPs*|allowedips*)
-                routes=$(echo "$line" | cut -d= -f2 | tr ',' '\n' | tr -d ' ')
-                for route in $routes; do
-                    case "$route" in
-                        "0.0.0.0/0"|"::/0")
-                            log "Skipping default route $route (WiFi preservation)"
-                            continue ;;
-                    esac
-                    ip route add "$route" dev "$iface" 2>>"$LOG"
-                done ;;
-        esac
-    done < "$conf"
+    if [ "$tunnel_mode" = "full" ]; then
+        # /1 pair outranks the WiFi 0/0 default without replacing it
+        gw=$(ip route show default | awk '/default/ {print $3; exit}')
+        wifi_dev=$(ip route show default | awk '/default/ {print $5; exit}')
+        if [ -n "$endpoint" ] && [ -n "$gw" ]; then
+            ip route add "$endpoint/32" via "$gw" dev "$wifi_dev" 2>>"$LOG"
+            echo "$endpoint" > "$ENDPOINT_FILE"
+        fi
+        ip route add 0.0.0.0/1 dev "$iface" 2>>"$LOG"
+        ip route add 128.0.0.0/1 dev "$iface" 2>>"$LOG"
+        log "Full tunnel routes added"
+    else
+        while IFS= read -r line; do
+            case "$line" in
+                AllowedIPs*|allowedips*)
+                    routes=$(echo "$line" | cut -d= -f2 | tr ',' '\n' | tr -d ' ')
+                    for route in $routes; do
+                        case "$route" in
+                            "0.0.0.0/0"|"::/0")
+                                log "Skipping $route in split mode; use Full tunnel to route all traffic"
+                                continue ;;
+                        esac
+                        ip route add "$route" dev "$iface" 2>>"$LOG"
+                    done ;;
+            esac
+        done < "$conf"
+    fi
 
     if [ -n "$dns" ]; then
         cp /etc/resolv.conf /tmp/resolv.conf.wg_bak 2>/dev/null
@@ -121,6 +130,10 @@ wg_down() {
     log "Disconnecting: $iface"
     ip link delete "$iface" 2>>"$LOG"
 
+    endpoint=$(cat "$ENDPOINT_FILE" 2>/dev/null)
+    [ -n "$endpoint" ] && ip route del "$endpoint/32" 2>/dev/null
+    rm -f "$ENDPOINT_FILE"
+
     if [ -f /tmp/resolv.conf.wg_bak ]; then
         mv /tmp/resolv.conf.wg_bak /etc/resolv.conf
         log "Restored DNS"
@@ -128,52 +141,154 @@ wg_down() {
 
     rm -f "$STATE_FILE"
     log "Disconnected $iface"
-    return 0
+}
+
+get_vpn_ip() {
+    ip addr show wg0 2>/dev/null | awk '/inet / {print $2; exit}'
+}
+
+settings_read() {
+    [ -f "$SETTINGS_FILE" ] && "$JQ" -r ".$1 // empty" "$SETTINGS_FILE" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
 # Startup checks
 # ---------------------------------------------------------------------------
 
-[ -f "$WG_BIN" ] || die "wg binary not found at $WG_BIN"
-[ -x "$WG_BIN" ] || chmod +x "$WG_BIN"
-[ -f "$WGGO_BIN" ] || die "wireguard-go not found at $WGGO_BIN"
-[ -x "$WGGO_BIN" ] || chmod +x "$WGGO_BIN"
+[ -f "$WG_BIN" ]          || die "wg binary not found at $WG_BIN"
+[ -x "$WG_BIN" ]          || chmod +x "$WG_BIN"
+[ -f "$WGGO_BIN" ]        || die "wireguard-go not found at $WGGO_BIN"
+[ -x "$WGGO_BIN" ]        || chmod +x "$WGGO_BIN"
+[ -f "$MINUI_LIST" ]      || die "minui-list not found at $MINUI_LIST"
+[ -x "$MINUI_LIST" ]      || chmod +x "$MINUI_LIST"
+[ -f "$MINUI_PRESENTER" ] || die "minui-presenter not found at $MINUI_PRESENTER"
+[ -x "$MINUI_PRESENTER" ] || chmod +x "$MINUI_PRESENTER"
+[ -f "$JQ" ]              || die "jq not found at $JQ"
+[ -x "$JQ" ]              || chmod +x "$JQ"
 
 mkdir -p "$CONF_DIR"
 log "pak launched"
 
 # ---------------------------------------------------------------------------
-# Main — toggle model: launch connects or disconnects
+# Main menu loop
 # ---------------------------------------------------------------------------
 
-active_iface=$(cat "$STATE_FILE" 2>/dev/null)
-
-if [ -n "$active_iface" ]; then
-    show_message "Disconnecting $active_iface..." 2
-    wg_down
-    show_message "VPN disconnected" 3
-else
-    selected_conf=""
+while true; do
+    # Enumerate config files
+    conf_options=""
     conf_count=0
+    saved_conf=$(settings_read "config")
+    saved_conf_idx=0
+
     for f in "$CONF_DIR"/*.conf; do
         [ -f "$f" ] || continue
+        name=$(basename "$f" .conf)
+        if [ -z "$conf_options" ]; then
+            conf_options="\"$name\""
+        else
+            conf_options="$conf_options, \"$name\""
+        fi
+        [ "$name" = "$saved_conf" ] && saved_conf_idx=$conf_count
         conf_count=$((conf_count + 1))
-        [ -z "$selected_conf" ] && selected_conf="$f"
     done
 
     if [ "$conf_count" -eq 0 ]; then
         show_message "No .conf files in $CONF_DIR" 4
         log "No config files found"
+        break
+    fi
+
+    # Tunnel preference
+    saved_tunnel=$(settings_read "tunnel")
+    saved_tunnel="${saved_tunnel:-split}"
+    tunnel_idx=0
+    [ "$saved_tunnel" = "full" ] && tunnel_idx=1
+
+    # VPN state
+    active_iface=$(cat "$STATE_FILE" 2>/dev/null)
+    vpn_enabled=0
+    [ -n "$active_iface" ] && vpn_enabled=1
+
+    if [ "$vpn_enabled" -eq 1 ]; then
+        vpn_ip=$(get_vpn_ip)
+        status_text="Connected${vpn_ip:+ ($vpn_ip)}"
     else
-        name=$(basename "$selected_conf" .conf)
-        [ "$conf_count" -gt 1 ] && log "Multiple confs found, using first: $name"
-        show_message "Connecting: $name..." 2
-        if wg_up "$selected_conf"; then
-            show_message "Connected: $name" 3
+        status_text="Disconnected"
+    fi
+
+    cat > "$MENU_INPUT" <<EOF
+{
+  "settings": [
+    {"name": "Status",  "options": ["$status_text"],    "selected": 0, "features": {"unselectable": true}},
+    {"name": "VPN",     "options": ["Off", "On"],       "selected": $vpn_enabled},
+    {"name": "Config",  "options": [$conf_options],     "selected": $saved_conf_idx},
+    {"name": "Tunnel",  "options": ["Split", "Full"],   "selected": $tunnel_idx}
+  ]
+}
+EOF
+
+    rm -f "$MENU_OUTPUT"
+    "$MINUI_LIST" \
+        --disable-auto-sleep \
+        --file "$MENU_INPUT" \
+        --format json \
+        --title "WireGuard VPN" \
+        --confirm-text "SAVE" \
+        --item-key "settings" \
+        --write-value state \
+        --write-location "$MENU_OUTPUT" >/dev/null
+    list_exit=$?
+
+    [ "$list_exit" -ne 0 ] && break
+    [ ! -f "$MENU_OUTPUT" ] && break
+
+    new_vpn=$("$JQ" -r '.settings[1].selected' "$MENU_OUTPUT")
+    new_conf_idx=$("$JQ" -r '.settings[2].selected' "$MENU_OUTPUT")
+    new_tunnel_idx=$("$JQ" -r '.settings[3].selected' "$MENU_OUTPUT")
+
+    # Resolve conf index to path/name
+    new_conf_name=""
+    new_conf_path=""
+    ci=0
+    for f in "$CONF_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        if [ "$ci" -eq "$new_conf_idx" ]; then
+            new_conf_name=$(basename "$f" .conf)
+            new_conf_path="$f"
+        fi
+        ci=$((ci + 1))
+    done
+
+    new_tunnel="split"
+    [ "$new_tunnel_idx" -eq 1 ] && new_tunnel="full"
+
+    # Persist settings
+    printf '{"config": "%s", "tunnel": "%s"}\n' "$new_conf_name" "$new_tunnel" > "$SETTINGS_FILE"
+
+    # Apply changes
+    if [ "$new_vpn" -eq 1 ] && [ "$vpn_enabled" -eq 0 ]; then
+        show_message "Connecting: $new_conf_name..."
+        if wg_up "$new_conf_path" "$new_tunnel"; then
+            show_message "Connected: $new_conf_name" 2
+        else
+            show_message "Connection failed" 3
+        fi
+    elif [ "$new_vpn" -eq 0 ] && [ "$vpn_enabled" -eq 1 ]; then
+        show_message "Disconnecting..."
+        wg_down
+        show_message "Disconnected" 2
+    elif [ "$new_vpn" -eq 1 ] && [ "$vpn_enabled" -eq 1 ]; then
+        if [ "$new_conf_name" != "$saved_conf" ] || [ "$new_tunnel" != "$saved_tunnel" ]; then
+            show_message "Reconnecting: $new_conf_name..."
+            wg_down
+            if wg_up "$new_conf_path" "$new_tunnel"; then
+                show_message "Connected: $new_conf_name" 2
+            else
+                show_message "Connection failed" 3
+            fi
         fi
     fi
-fi
+done
 
 log "pak exited"
 exit 0

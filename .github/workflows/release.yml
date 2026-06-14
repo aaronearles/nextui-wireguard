@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install cross toolchain and build deps
-        run: sudo apt-get install -y gcc-aarch64-linux-gnu curl make tar xz-utils zip file
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu curl make tar xz-utils zip unzip file
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -36,7 +36,7 @@ jobs:
           cd /tmp/wireguard-go
           GOARCH=arm64 GOOS=linux CGO_ENABLED=0 go build -o $GITHUB_WORKSPACE/bin/tg5040/wireguard-go .
 
-      - name: Build wg and package
+      - name: Build and package
         run: make WG_VERSION=1.0.20210914 TRIPLE=aarch64-linux-gnu package
 
       - name: Create Release

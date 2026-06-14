@@ -1,5 +1,8 @@
 bin/tg5040/wg
 bin/tg5040/wireguard-go
+bin/tg5040/minui-list
+bin/tg5040/minui-presenter
+bin/tg5040/jq
 *.zip
 wireguard-tools-*/
 build/
