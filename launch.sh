@@ -1,10 +1,13 @@
 #!/bin/sh
 # WireGuard VPN client manager pak for NextUI / TrimUI Brick
 
-# Redirect all stderr (including set -x trace) to a debug log on the SD card.
-# This file will exist even if the script crashes at line 5.
 exec 2>>/mnt/SDCARD/wireguard/wg_trace.txt
 set -x
+
+# Dump env and search for minui tools so we can find the right paths.
+env >> /mnt/SDCARD/wireguard/wg_env.txt
+find /mnt/SDCARD/.system /usr/trimui /opt/trimui /usr/bin /usr/local/bin \
+    -name "minui-*" 2>/dev/null >> /mnt/SDCARD/wireguard/wg_find.txt
 
 PLATFORM="${PLATFORM:-tg5040}"
 PAK_DIR="$(dirname "$0")"
