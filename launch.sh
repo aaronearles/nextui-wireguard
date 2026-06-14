@@ -130,10 +130,6 @@ wg_down() {
 [ -x "$WG_BIN" ] || chmod +x "$WG_BIN"
 
 mkdir -p "$CONF_DIR"
-
-# Remove debug files left over from troubleshooting phase (harmless no-op after first run)
-rm -f "$CONF_DIR/wg_trace.txt" "$CONF_DIR/wg_env.txt" "$CONF_DIR/wg_find.txt" 2>/dev/null
-
 log "pak launched"
 
 # ---------------------------------------------------------------------------
