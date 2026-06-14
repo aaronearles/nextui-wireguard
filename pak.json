@@ -1,12 +1,13 @@
 {
   "name": "WireGuard",
-  "version": "v0.1.5",
+  "version": "v0.1.6",
   "type": "TOOL",
   "description": "WireGuard VPN client manager. Place .conf files on your SD card to connect.",
   "author": "aaronearles",
   "repo_url": "https://github.com/aaronearles/nextui-wireguard",
   "release_filename": "WireGuard.pak.zip",
   "changelog": {
+    "v0.1.6": "Probe show2.elf and sdldisplay usage; read other pak launch scripts",
     "v0.1.5": "List system bin and MinUI.pak contents for display tool discovery",
     "v0.1.4": "Dump env and find minui tools for display path discovery",
     "v0.1.3": "Add set -x trace log for diagnostics",

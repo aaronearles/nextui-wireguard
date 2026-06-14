@@ -4,16 +4,17 @@
 exec 2>>/mnt/SDCARD/wireguard/wg_trace.txt
 set -x
 
-# List system bin and MinUI.pak to find available display tools.
+# Probe display tools and check other pak launch scripts for usage patterns.
 {
-    echo "=== /mnt/SDCARD/.system/tg5040/bin ==="
-    ls /mnt/SDCARD/.system/tg5040/bin/ 2>/dev/null
-    echo "=== /usr/trimui/bin ==="
-    ls /usr/trimui/bin/ 2>/dev/null
-    echo "=== /mnt/SDCARD/.system/tg5040/paks ==="
-    ls /mnt/SDCARD/.system/tg5040/paks/ 2>/dev/null
-    echo "=== /mnt/SDCARD/.system/tg5040/paks/MinUI.pak ==="
-    ls /mnt/SDCARD/.system/tg5040/paks/MinUI.pak/ 2>/dev/null
+    echo "=== show2.elf usage ==="
+    show2.elf --help 2>&1 || show2.elf -h 2>&1 || true
+    echo "=== sdldisplay usage ==="
+    sdldisplay --help 2>&1 || sdldisplay -h 2>&1 || true
+    echo "=== other pak launch scripts ==="
+    for f in /mnt/SDCARD/Tools/tg5040/*.pak/launch.sh; do
+        echo "--- $f ---"
+        head -60 "$f" 2>/dev/null
+    done
 } >> /mnt/SDCARD/wireguard/wg_find.txt
 
 PLATFORM="${PLATFORM:-tg5040}"
