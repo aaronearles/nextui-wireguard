@@ -30,18 +30,14 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Build wg binary
-        run: make WG_VERSION=1.0.20210914 TRIPLE=aarch64-linux-gnu all
-
       - name: Build wireguard-go for aarch64
         run: |
           git clone https://github.com/WireGuard/wireguard-go.git /tmp/wireguard-go
           cd /tmp/wireguard-go
           GOARCH=arm64 GOOS=linux CGO_ENABLED=0 go build -o $GITHUB_WORKSPACE/bin/tg5040/wireguard-go .
-          file $GITHUB_WORKSPACE/bin/tg5040/wireguard-go
 
-      - name: Package
-        run: make package
+      - name: Build wg and package
+        run: make WG_VERSION=1.0.20210914 TRIPLE=aarch64-linux-gnu package
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
