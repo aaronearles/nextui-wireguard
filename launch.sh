@@ -55,9 +55,15 @@ wg_up() {
     tmpconf="/tmp/wg_stripped.conf"
     grep -iv '^\(Address\|DNS\|PreUp\|PostUp\|PreDown\|PostDown\)' "$conf" > "$tmpconf"
 
+    # Load WireGuard kernel module if compiled as module (no-op if built-in)
+    modprobe wireguard 2>>"$LOG" || true
+
+    # Remove any stale interface from a previous failed run
+    ip link delete "$iface" 2>/dev/null || true
+
     if ! ip link add "$iface" type wireguard 2>>"$LOG"; then
-        log "ERROR: ip link add $iface failed"
-        show_message "Failed to create WG interface" 4
+        log "ERROR: ip link add $iface failed (kernel module missing?)"
+        show_message "WG kernel module unavailable" 4
         return 1
     fi
 
