@@ -4,10 +4,17 @@
 exec 2>>/mnt/SDCARD/wireguard/wg_trace.txt
 set -x
 
-# Dump env and search for minui tools so we can find the right paths.
-env >> /mnt/SDCARD/wireguard/wg_env.txt
-find /mnt/SDCARD/.system /usr/trimui /opt/trimui /usr/bin /usr/local/bin \
-    -name "minui-*" 2>/dev/null >> /mnt/SDCARD/wireguard/wg_find.txt
+# List system bin and MinUI.pak to find available display tools.
+{
+    echo "=== /mnt/SDCARD/.system/tg5040/bin ==="
+    ls /mnt/SDCARD/.system/tg5040/bin/ 2>/dev/null
+    echo "=== /usr/trimui/bin ==="
+    ls /usr/trimui/bin/ 2>/dev/null
+    echo "=== /mnt/SDCARD/.system/tg5040/paks ==="
+    ls /mnt/SDCARD/.system/tg5040/paks/ 2>/dev/null
+    echo "=== /mnt/SDCARD/.system/tg5040/paks/MinUI.pak ==="
+    ls /mnt/SDCARD/.system/tg5040/paks/MinUI.pak/ 2>/dev/null
+} >> /mnt/SDCARD/wireguard/wg_find.txt
 
 PLATFORM="${PLATFORM:-tg5040}"
 PAK_DIR="$(dirname "$0")"
