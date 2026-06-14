@@ -1,4 +1,5 @@
 bin/tg5040/wg
+bin/tg5040/wireguard-go
 *.zip
 wireguard-tools-*/
 build/

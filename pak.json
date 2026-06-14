@@ -1,12 +1,13 @@
 {
   "name": "WireGuard",
-  "version": "v0.1.8",
+  "version": "v0.1.9",
   "type": "TOOL",
   "description": "WireGuard VPN client manager. Place .conf files on your SD card to connect.",
   "author": "aaronearles",
   "repo_url": "https://github.com/aaronearles/nextui-wireguard",
   "release_filename": "WireGuard.pak.zip",
   "changelog": {
+    "v0.1.9": "Switch to wireguard-go (userspace); no kernel module required",
     "v0.1.8": "modprobe wireguard before ip link add; clean up stale interface on retry",
     "v0.1.7": "Switch to show2.elf for display; toggle connect/disconnect model",
     "v0.1.6": "Probe show2.elf and sdldisplay usage; read other pak launch scripts",

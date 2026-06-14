@@ -7,6 +7,7 @@ SDCARD="${SDCARD_PATH:-/mnt/SDCARD}"
 CONF_DIR="$SDCARD/wireguard"
 STATE_FILE="/tmp/wg_pak_active"
 WG_BIN="$PAK_DIR/bin/$PLATFORM/wg"
+WGGO_BIN="$PAK_DIR/bin/$PLATFORM/wireguard-go"
 LOG="${LOGS_PATH:+$LOGS_PATH/wireguard.log}"
 LOG="${LOG:-$SDCARD/wireguard/wireguard.log}"
 LOGO="$SDCARD/.system/res/logo.png"
@@ -55,15 +56,23 @@ wg_up() {
     tmpconf="/tmp/wg_stripped.conf"
     grep -iv '^\(Address\|DNS\|PreUp\|PostUp\|PreDown\|PostDown\)' "$conf" > "$tmpconf"
 
-    # Load WireGuard kernel module if compiled as module (no-op if built-in)
-    modprobe wireguard 2>>"$LOG" || true
-
     # Remove any stale interface from a previous failed run
     ip link delete "$iface" 2>/dev/null || true
 
-    if ! ip link add "$iface" type wireguard 2>>"$LOG"; then
-        log "ERROR: ip link add $iface failed (kernel module missing?)"
-        show_message "WG kernel module unavailable" 4
+    # Start userspace WireGuard daemon (no kernel module required)
+    "$WGGO_BIN" "$iface" 2>>"$LOG" &
+
+    # Wait up to 5s for the interface to appear
+    i=0
+    while [ "$i" -lt 5 ]; do
+        ip link show "$iface" >/dev/null 2>&1 && break
+        sleep 1
+        i=$((i + 1))
+    done
+
+    if ! ip link show "$iface" >/dev/null 2>&1; then
+        log "ERROR: wireguard-go did not create interface (tun support missing?)"
+        show_message "Failed to start WireGuard" 4
         return 1
     fi
 
@@ -128,6 +137,8 @@ wg_down() {
 
 [ -f "$WG_BIN" ] || die "wg binary not found at $WG_BIN"
 [ -x "$WG_BIN" ] || chmod +x "$WG_BIN"
+[ -f "$WGGO_BIN" ] || die "wireguard-go not found at $WGGO_BIN"
+[ -x "$WGGO_BIN" ] || chmod +x "$WGGO_BIN"
 
 mkdir -p "$CONF_DIR"
 log "pak launched"

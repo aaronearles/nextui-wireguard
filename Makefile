@@ -28,5 +28,6 @@ package: all
 	zip -r build/WireGuard.pak.zip \
 	  launch.sh \
 	  pak.json \
-	  bin/tg5040/wg
+	  bin/tg5040/wg \
+	  bin/tg5040/wireguard-go
 	@echo "Package: build/WireGuard.pak.zip"
