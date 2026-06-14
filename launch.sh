@@ -7,10 +7,11 @@ SDCARD="/mnt/SDCARD"
 CONF_DIR="$SDCARD/wireguard"
 STATE_FILE="/tmp/wg_pak_active"
 WG_BIN="$PAK_DIR/bin/$PLATFORM/wg"
-LOGS_PATH="${LOGS_PATH:-/tmp}"
-LOG="$LOGS_PATH/wireguard.log"
+LOG="${LOGS_PATH:+$LOGS_PATH/wireguard.log}"
+LOG="${LOG:-$SDCARD/wireguard/wireguard.log}"
 
 log() {
+    mkdir -p "$(dirname "$LOG")" 2>/dev/null
     echo "$(date '+%Y-%m-%d %H:%M:%S'): $*" >> "$LOG"
 }
 
