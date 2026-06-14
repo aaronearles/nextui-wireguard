@@ -1,0 +1,15 @@
+{
+  "name": "WireGuard",
+  "version": "v0.1.0",
+  "type": "TOOL",
+  "description": "WireGuard VPN client manager. Place .conf files on your SD card to connect.",
+  "author": "aaronearles",
+  "repo_url": "https://github.com/aaronearles/nextui-wireguard",
+  "release_filename": "WireGuard.pak.zip",
+  "changelog": {
+    "v0.1.0": "Initial release"
+  },
+  "platforms": [
+    "tg5040"
+  ]
+}

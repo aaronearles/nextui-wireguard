@@ -1,0 +1,4 @@
+bin/tg5040/wg
+*.zip
+wireguard-tools-*/
+build/
