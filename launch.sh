@@ -61,6 +61,7 @@ wg_up() {
     grep -iv '^\(Address\|DNS\|PreUp\|PostUp\|PreDown\|PostDown\)' "$conf" > "$tmpconf"
 
     ip link delete "$iface" 2>/dev/null || true
+    killall wireguard-go 2>/dev/null || true
     "$WGGO_BIN" "$iface" 2>>"$LOG" &
 
     i=0
@@ -89,8 +90,12 @@ wg_up() {
         gw=$(ip route show default | awk '/default/ {print $3; exit}')
         wifi_dev=$(ip route show default | awk '/default/ {print $5; exit}')
         if [ -n "$endpoint" ] && [ -n "$gw" ]; then
-            ip route add "$endpoint/32" via "$gw" dev "$wifi_dev" 2>>"$LOG"
-            echo "$endpoint" > "$ENDPOINT_FILE"
+            # Resolve hostname to IP — BusyBox `ip route` may not support hostname args
+            endpoint_ip=$(ping -c 1 -W 1 "$endpoint" 2>/dev/null | awk -F'[()]' 'NR==1{print $2}')
+            [ -z "$endpoint_ip" ] && endpoint_ip="$endpoint"
+            ip route add "$endpoint_ip/32" via "$gw" dev "$wifi_dev" 2>>"$LOG"
+            log "Endpoint host route: $endpoint_ip via $gw dev $wifi_dev"
+            echo "$endpoint_ip" > "$ENDPOINT_FILE"
         fi
         ip route add 0.0.0.0/1 dev "$iface" 2>>"$LOG"
         ip route add 128.0.0.0/1 dev "$iface" 2>>"$LOG"
@@ -114,7 +119,16 @@ wg_up() {
 
     if [ -n "$dns" ]; then
         cp /etc/resolv.conf /tmp/resolv.conf.wg_bak 2>/dev/null
-        printf 'nameserver %s\n' "$dns" > /etc/resolv.conf
+        # Write one nameserver line per entry (DNS may be comma-separated)
+        printf '%s' "$dns" | tr ',' '\n' | while IFS= read -r ns; do
+            printf 'nameserver %s\n' "$ns"
+        done > /etc/resolv.conf
+        # In split mode, ensure DNS servers are routed through the tunnel
+        if [ "$tunnel_mode" = "split" ]; then
+            printf '%s' "$dns" | tr ',' '\n' | while IFS= read -r ns; do
+                ip route add "$ns/32" dev "$iface" 2>>"$LOG" || true
+            done
+        fi
         log "Set DNS: $dns"
     fi
 
@@ -128,6 +142,7 @@ wg_down() {
     [ -z "$iface" ] && return 0
 
     log "Disconnecting: $iface"
+    killall wireguard-go 2>/dev/null || true
     ip link delete "$iface" 2>>"$LOG"
 
     endpoint=$(cat "$ENDPOINT_FILE" 2>/dev/null)
@@ -144,7 +159,7 @@ wg_down() {
 }
 
 get_vpn_ip() {
-    ip addr show wg0 2>/dev/null | awk '/inet / {print $2; exit}'
+    ip addr show wg0 2>/dev/null | awk '$1 == "inet" {print $2; exit}'
 }
 
 settings_read() {
@@ -204,10 +219,15 @@ while true; do
     tunnel_idx=0
     [ "$saved_tunnel" = "full" ] && tunnel_idx=1
 
-    # VPN state
+    # VPN state — verify interface actually exists (clears stale state after reboot)
     active_iface=$(cat "$STATE_FILE" 2>/dev/null)
     vpn_enabled=0
-    [ -n "$active_iface" ] && vpn_enabled=1
+    if [ -n "$active_iface" ] && ip link show "$active_iface" >/dev/null 2>&1; then
+        vpn_enabled=1
+    else
+        rm -f "$STATE_FILE" "$ENDPOINT_FILE"
+        active_iface=""
+    fi
 
     if [ "$vpn_enabled" -eq 1 ]; then
         vpn_ip=$(get_vpn_ip)
