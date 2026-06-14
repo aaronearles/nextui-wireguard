@@ -1,1 +1,44 @@
-bmFtZTogQnVpbGQgYW5kIFJlbGVhc2UKCm9uOgogIHB1c2g6CiAgICB0YWdzOgogICAgICAtICd2KicKICB3b3JrZmxvd19kaXNwYXRjaDoKICAgIGlucHV0czoKICAgICAgdGFnOgogICAgICAgIGRlc2NyaXB0aW9uOiAnUmVsZWFzZSB0YWcgKGUuZy4gdjAuMS4wKScKICAgICAgICByZXF1aXJlZDogdHJ1ZQogICAgICAgIGRlZmF1bHQ6ICd2MC4xLjAnCgpqb2JzOgogIGJ1aWxkOgogICAgcnVucy1vbjogdWJ1bnR1LWxhdGVzdAogICAgY29udGFpbmVyOgogICAgICBpbWFnZTogbXVzbGNjL3g4Nl82NDphYXJjaDY0LWxpbnV4LW11c2wKCiAgICBzdGVwczoKICAgICAgLSBuYW1lOiBDaGVja291dAogICAgICAgIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRAdjQKCiAgICAgIC0gbmFtZTogSW5zdGFsbCBidWlsZCBkZXBzCiAgICAgICAgcnVuOiBhcGsgYWRkIC0tbm8tY2FjaGUgY3VybCBtYWtlIHRhciB4eiB6aXAgZmlsZQoKICAgICAgLSBuYW1lOiBCdWlsZCB3ZyBiaW5hcnkKICAgICAgICBydW46IG1ha2UgV0dfVkVSU0lPTj0xLjAuMjAyMTA5MTQgYWxsCgogICAgICAtIG5hbWU6IFZlcmlmeSBiaW5hcnkKICAgICAgICBydW46IHwKICAgICAgICAgIGZpbGUgYmluL3RnNTA0MC93ZwogICAgICAgICAgIyBNdXN0IHNheTogRUxGIDY0LWJpdCBMU0IgZXhlY3V0YWJsZSwgQVJNIGFhcmNoNjQsIHN0YXRpY2FsbHkgbGlua2VkCgogICAgICAtIG5hbWU6IFBhY2thZ2UKICAgICAgICBydW46IG1ha2UgcGFja2FnZQoKICAgICAgLSBuYW1lOiBDcmVhdGUgUmVsZWFzZQogICAgICAgIHVzZXM6IHNvZnRwcm9wcy9hY3Rpb24tZ2gtcmVsZWFzZUB2MgogICAgICAgIHdpdGg6CiAgICAgICAgICB0YWdfbmFtZTogJHt7IGdpdGh1Yi5ldmVudF9uYW1lID09ICd3b3JrZmxvd19kaXNwYXRjaCcgJiYgZ2l0aHViLmV2ZW50LmlucHV0cy50YWcgfHwgZ2l0aHViLnJlZl9uYW1lIH19CiAgICAgICAgICBmaWxlczogYnVpbGQvV2lyZUd1YXJkLnBhay56aXAKICAgICAgICBlbnY6CiAgICAgICAgICBHSVRIVUJfVE9LRU46ICR7eyBzZWNyZXRzLkdJVEhVQl9UT0tFTiB9fQo=
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: muslcc/x86_64:aarch64-linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: apk add --no-cache curl make tar xz zip file
+
+      - name: Build wg binary
+        run: make WG_VERSION=1.0.20210914 all
+
+      - name: Verify binary
+        run: |
+          file bin/tg5040/wg
+          # Must say: ELF 64-bit LSB executable, ARM aarch64, statically linked
+
+      - name: Package
+        run: make package
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          files: build/WireGuard.pak.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
