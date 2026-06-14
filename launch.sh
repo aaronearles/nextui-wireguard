@@ -24,16 +24,30 @@ die() {
 # UI helpers
 # ---------------------------------------------------------------------------
 
-if command -v minui-presenter >/dev/null 2>&1; then
-    USE_MINUI=1
-else
-    USE_MINUI=0
-fi
+# Search PATH then known NextUI system locations for a display tool.
+_find_tool() {
+    name="$1"
+    if command -v "$name" >/dev/null 2>&1; then
+        command -v "$name"; return 0
+    fi
+    for dir in \
+        "/mnt/SDCARD/.system/$PLATFORM/bin" \
+        "/usr/trimui/bin" \
+        "/opt/trimui/bin" \
+        "$PAK_DIR/../../.system/$PLATFORM/bin"; do
+        [ -x "$dir/$name" ] && { echo "$dir/$name"; return 0; }
+    done
+    return 1
+}
+
+MINUI_PRESENTER=$(_find_tool minui-presenter 2>/dev/null)
+MINUI_LIST=$(_find_tool minui-list 2>/dev/null)
 
 show_message() {
     msg="$1"
-    if [ "$USE_MINUI" = "1" ]; then
-        echo "$msg" | minui-presenter --stdin --timeout 4
+    timeout="${2:-4}"
+    if [ -n "$MINUI_PRESENTER" ]; then
+        echo "$msg" | "$MINUI_PRESENTER" --stdin --timeout "$timeout"
     else
         echo "$msg"
         sleep 2
@@ -41,25 +55,22 @@ show_message() {
 }
 
 # Present a list of options; prints the selected item to stdout.
-# Arguments: option1 option2 ...
-# Returns: exit code 1 if cancelled/nothing selected.
+# Returns exit code 1 if cancelled/nothing selected.
 show_menu() {
     title="$1"
     shift
-    if [ "$USE_MINUI" = "1" ] && command -v minui-list >/dev/null 2>&1; then
-        # Build newline-separated list for minui-list
+    if [ -n "$MINUI_LIST" ]; then
         list=""
         for item in "$@"; do
             list="${list}${item}
 "
         done
-        result=$(printf '%s' "$list" | minui-list --title "$title" --stdin 2>/dev/null)
+        result=$(printf '%s' "$list" | "$MINUI_LIST" --title "$title" --stdin 2>/dev/null)
         rc=$?
         [ $rc -ne 0 ] && return 1
         echo "$result"
         return 0
     else
-        # Fallback: numbered text menu
         echo ""
         echo "=== $title ==="
         i=1
@@ -68,7 +79,7 @@ show_menu() {
             i=$((i + 1))
         done
         echo ""
-        printf "Select [1-%d] or 0 to exit: " "$(($# ))"
+        printf "Select [1-%d] or 0 to exit: " "$#"
         read -r choice
         case "$choice" in
             ''|0) return 1 ;;
@@ -77,12 +88,10 @@ show_menu() {
         if [ "$choice" -lt 1 ] || [ "$choice" -gt $# ]; then
             return 1
         fi
-        # Print the selected item
         i=1
         for item in "$@"; do
             if [ "$i" = "$choice" ]; then
-                echo "$item"
-                return 0
+                echo "$item"; return 0
             fi
             i=$((i + 1))
         done
@@ -185,8 +194,8 @@ wg_status() {
         return
     fi
     status=$("$WG_BIN" show "$iface" 2>&1)
-    if [ "$USE_MINUI" = "1" ] && command -v minui-presenter >/dev/null 2>&1; then
-        echo "$status" | minui-presenter --stdin --timeout 10
+    if [ -n "$MINUI_PRESENTER" ]; then
+        echo "$status" | "$MINUI_PRESENTER" --stdin --timeout 10
     else
         echo "=== WireGuard Status: $iface ==="
         echo "$status"
@@ -205,7 +214,7 @@ wg_status() {
 
 mkdir -p "$CONF_DIR"
 
-log "pak launched, CONF_DIR=$CONF_DIR"
+log "pak launched, CONF_DIR=$CONF_DIR, presenter=${MINUI_PRESENTER:-none}, list=${MINUI_LIST:-none}"
 
 # ---------------------------------------------------------------------------
 # Main loop
