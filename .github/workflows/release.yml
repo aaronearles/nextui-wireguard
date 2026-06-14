@@ -14,26 +14,21 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: muslcc/x86_64:aarch64-linux-musl
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build deps
-        run: apk add --no-cache curl make tar xz zip file
+      - name: Install cross toolchain and build deps
+        run: sudo apt-get install -y gcc-aarch64-linux-gnu curl make tar xz-utils zip file
 
-      - name: Build wg binary
-        run: make WG_VERSION=1.0.20210914 all
+      - name: Build and package
+        run: make WG_VERSION=1.0.20210914 TRIPLE=aarch64-linux-gnu package
 
       - name: Verify binary
         run: |
           file bin/tg5040/wg
-          # Must say: ELF 64-bit LSB executable, ARM aarch64, statically linked
-
-      - name: Package
-        run: make package
+          # Must say: ELF 64-bit LSB executable, ARM aarch64
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
