@@ -1,30 +1,15 @@
 #!/bin/sh
 # WireGuard VPN client manager pak for NextUI / TrimUI Brick
 
-exec 2>>/mnt/SDCARD/wireguard/wg_trace.txt
-set -x
-
-# Probe display tools and check other pak launch scripts for usage patterns.
-{
-    echo "=== show2.elf usage ==="
-    show2.elf --help 2>&1 || show2.elf -h 2>&1 || true
-    echo "=== sdldisplay usage ==="
-    sdldisplay --help 2>&1 || sdldisplay -h 2>&1 || true
-    echo "=== other pak launch scripts ==="
-    for f in /mnt/SDCARD/Tools/tg5040/*.pak/launch.sh; do
-        echo "--- $f ---"
-        head -60 "$f" 2>/dev/null
-    done
-} >> /mnt/SDCARD/wireguard/wg_find.txt
-
 PLATFORM="${PLATFORM:-tg5040}"
 PAK_DIR="$(dirname "$0")"
-SDCARD="/mnt/SDCARD"
+SDCARD="${SDCARD_PATH:-/mnt/SDCARD}"
 CONF_DIR="$SDCARD/wireguard"
 STATE_FILE="/tmp/wg_pak_active"
 WG_BIN="$PAK_DIR/bin/$PLATFORM/wg"
 LOG="${LOGS_PATH:+$LOGS_PATH/wireguard.log}"
 LOG="${LOG:-$SDCARD/wireguard/wireguard.log}"
+LOGO="$SDCARD/.system/res/logo.png"
 
 log() {
     mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -33,86 +18,22 @@ log() {
 
 die() {
     log "FATAL: $*"
-    show_message "$*"
+    show_message "$*" 4
     exit 1
 }
 
 # ---------------------------------------------------------------------------
-# UI helpers
+# UI — show2.elf is the display tool on this NextUI firmware
 # ---------------------------------------------------------------------------
-
-# Search PATH then known NextUI system locations for a display tool.
-_find_tool() {
-    name="$1"
-    if command -v "$name" >/dev/null 2>&1; then
-        command -v "$name"; return 0
-    fi
-    for dir in \
-        "/mnt/SDCARD/.system/$PLATFORM/bin" \
-        "/usr/trimui/bin" \
-        "/opt/trimui/bin" \
-        "$PAK_DIR/../../.system/$PLATFORM/bin"; do
-        [ -x "$dir/$name" ] && { echo "$dir/$name"; return 0; }
-    done
-    return 1
-}
-
-MINUI_PRESENTER=$(_find_tool minui-presenter 2>/dev/null)
-MINUI_LIST=$(_find_tool minui-list 2>/dev/null)
 
 show_message() {
     msg="$1"
-    timeout="${2:-4}"
-    if [ -n "$MINUI_PRESENTER" ]; then
-        echo "$msg" | "$MINUI_PRESENTER" --stdin --timeout "$timeout"
+    timeout="${2:-3}"
+    if command -v show2.elf >/dev/null 2>&1 && [ -f "$LOGO" ]; then
+        show2.elf --mode=simple --image="$LOGO" --text="$msg" --timeout="$timeout"
     else
-        echo "$msg"
-        sleep 2
-    fi
-}
-
-# Present a list of options; prints the selected item to stdout.
-# Returns exit code 1 if cancelled/nothing selected.
-show_menu() {
-    title="$1"
-    shift
-    if [ -n "$MINUI_LIST" ]; then
-        list=""
-        for item in "$@"; do
-            list="${list}${item}
-"
-        done
-        result=$(printf '%s' "$list" | "$MINUI_LIST" --title "$title" --stdin 2>/dev/null)
-        rc=$?
-        [ $rc -ne 0 ] && return 1
-        echo "$result"
-        return 0
-    else
-        echo ""
-        echo "=== $title ==="
-        i=1
-        for item in "$@"; do
-            echo "  $i) $item"
-            i=$((i + 1))
-        done
-        echo ""
-        printf "Select [1-%d] or 0 to exit: " "$#"
-        read -r choice
-        case "$choice" in
-            ''|0) return 1 ;;
-            *[!0-9]*) return 1 ;;
-        esac
-        if [ "$choice" -lt 1 ] || [ "$choice" -gt $# ]; then
-            return 1
-        fi
-        i=1
-        for item in "$@"; do
-            if [ "$i" = "$choice" ]; then
-                echo "$item"; return 0
-            fi
-            i=$((i + 1))
-        done
-        return 1
+        echo "$msg" >&2
+        sleep "$timeout"
     fi
 }
 
@@ -134,29 +55,24 @@ wg_up() {
     tmpconf="/tmp/wg_stripped.conf"
     grep -iv '^\(Address\|DNS\|PreUp\|PostUp\|PreDown\|PostDown\)' "$conf" > "$tmpconf"
 
-    # Create interface
     if ! ip link add "$iface" type wireguard 2>>"$LOG"; then
         log "ERROR: ip link add $iface failed"
-        show_message "Failed to create WireGuard interface"
+        show_message "Failed to create WG interface" 4
         return 1
     fi
 
-    # Apply config
     if ! "$WG_BIN" setconf "$iface" "$tmpconf" 2>>"$LOG"; then
         log "ERROR: wg setconf failed"
         ip link delete "$iface" 2>/dev/null
-        show_message "Failed to apply WireGuard config"
+        show_message "Failed to apply WG config" 4
         return 1
     fi
 
-    # Assign address
-    if [ -n "$address" ]; then
-        ip addr add "$address" dev "$iface" 2>>"$LOG"
-    fi
+    [ -n "$address" ] && ip addr add "$address" dev "$iface" 2>>"$LOG"
 
     ip link set "$iface" up 2>>"$LOG"
 
-    # Add routes for each peer's AllowedIPs (skip default routes to preserve WiFi)
+    # Add routes from AllowedIPs; skip default routes to preserve WiFi
     while IFS= read -r line; do
         case "$line" in
             AllowedIPs*|allowedips*)
@@ -165,16 +81,13 @@ wg_up() {
                     case "$route" in
                         "0.0.0.0/0"|"::/0")
                             log "Skipping default route $route (WiFi preservation)"
-                            continue
-                            ;;
+                            continue ;;
                     esac
                     ip route add "$route" dev "$iface" 2>>"$LOG"
-                done
-                ;;
+                done ;;
         esac
     done < "$conf"
 
-    # Update DNS if specified
     if [ -n "$dns" ]; then
         cp /etc/resolv.conf /tmp/resolv.conf.wg_bak 2>/dev/null
         printf 'nameserver %s\n' "$dns" > /etc/resolv.conf
@@ -191,7 +104,6 @@ wg_down() {
     [ -z "$iface" ] && return 0
 
     log "Disconnecting: $iface"
-
     ip link delete "$iface" 2>>"$LOG"
 
     if [ -f /tmp/resolv.conf.wg_bak ]; then
@@ -204,24 +116,6 @@ wg_down() {
     return 0
 }
 
-wg_status() {
-    iface=$(cat "$STATE_FILE" 2>/dev/null)
-    if [ -z "$iface" ]; then
-        show_message "No active WireGuard tunnel"
-        return
-    fi
-    status=$("$WG_BIN" show "$iface" 2>&1)
-    if [ -n "$MINUI_PRESENTER" ]; then
-        echo "$status" | "$MINUI_PRESENTER" --stdin --timeout 10
-    else
-        echo "=== WireGuard Status: $iface ==="
-        echo "$status"
-        echo ""
-        echo "Press Enter to continue..."
-        read -r _
-    fi
-}
-
 # ---------------------------------------------------------------------------
 # Startup checks
 # ---------------------------------------------------------------------------
@@ -230,84 +124,39 @@ wg_status() {
 [ -x "$WG_BIN" ] || chmod +x "$WG_BIN"
 
 mkdir -p "$CONF_DIR"
-
-log "pak launched, CONF_DIR=$CONF_DIR, presenter=${MINUI_PRESENTER:-none}, list=${MINUI_LIST:-none}"
+log "pak launched"
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Main — toggle model: launch connects or disconnects
 # ---------------------------------------------------------------------------
 
-while true; do
-    active_iface=$(cat "$STATE_FILE" 2>/dev/null)
+active_iface=$(cat "$STATE_FILE" 2>/dev/null)
 
-    if [ -n "$active_iface" ]; then
-        # Tunnel is up — show disconnect/status/exit menu
-        choice=$(show_menu "WireGuard (Active: $active_iface)" \
-            "Disconnect $active_iface" \
-            "Status" \
-            "Exit")
-        rc=$?
-        [ $rc -ne 0 ] && break
-        case "$choice" in
-            Disconnect*)
-                wg_down
-                show_message "Disconnected"
-                ;;
-            Status)
-                wg_status
-                ;;
-            Exit)
-                break
-                ;;
-        esac
+if [ -n "$active_iface" ]; then
+    show_message "Disconnecting $active_iface..." 2
+    wg_down
+    show_message "VPN disconnected" 3
+else
+    selected_conf=""
+    conf_count=0
+    for f in "$CONF_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        conf_count=$((conf_count + 1))
+        [ -z "$selected_conf" ] && selected_conf="$f"
+    done
+
+    if [ "$conf_count" -eq 0 ]; then
+        show_message "No .conf files in $CONF_DIR" 4
+        log "No config files found"
     else
-        # No tunnel — show available configs
-        conf_list=""
-        for f in "$CONF_DIR"/*.conf; do
-            [ -f "$f" ] && conf_list="$conf_list $f"
-        done
-
-        if [ -z "$conf_list" ]; then
-            show_message "No .conf files found in $CONF_DIR"
-            log "No config files found in $CONF_DIR"
-            break
+        name=$(basename "$selected_conf" .conf)
+        [ "$conf_count" -gt 1 ] && log "Multiple confs found, using first: $name"
+        show_message "Connecting: $name..." 2
+        if wg_up "$selected_conf"; then
+            show_message "Connected: $name" 3
         fi
-
-        # Build menu items from basenames
-        menu_items=""
-        for f in $conf_list; do
-            name=$(basename "$f" .conf)
-            menu_items="$menu_items $name"
-        done
-
-        # Append Exit
-        menu_items="$menu_items Exit"
-
-        # shellcheck disable=SC2086
-        choice=$(show_menu "WireGuard — Select Tunnel" $menu_items)
-        rc=$?
-        [ $rc -ne 0 ] && break
-
-        case "$choice" in
-            Exit)
-                break
-                ;;
-            *)
-                # Find the matching conf file
-                selected_conf="$CONF_DIR/${choice}.conf"
-                if [ -f "$selected_conf" ]; then
-                    show_message "Connecting to $choice..."
-                    if wg_up "$selected_conf"; then
-                        show_message "Connected to $choice"
-                    fi
-                else
-                    log "ERROR: conf not found: $selected_conf"
-                    show_message "Config not found: $choice"
-                fi
-                ;;
-        esac
     fi
-done
+fi
 
 log "pak exited"
 exit 0
