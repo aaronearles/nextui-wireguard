@@ -1,5 +1,6 @@
 WG_VERSION ?= 1.0.20210914
-WG_URL = https://git.zx2c4.com/wireguard-tools/snapshot/wireguard-tools-$(WG_VERSION).tar.xz
+WG_URL = https://github.com/WireGuard/wireguard-tools/archive/refs/tags/v$(WG_VERSION).tar.gz
+WG_DIR  = wireguard-tools-$(WG_VERSION)
 TRIPLE  = aarch64-linux-musl
 CC      = $(TRIPLE)-gcc
 OUTDIR  = bin/tg5040
@@ -7,20 +8,20 @@ OUTDIR  = bin/tg5040
 .PHONY: all clean fetch package
 
 all: fetch
-	cd wireguard-tools-$(WG_VERSION)/src && \
+	cd $(WG_DIR)/src && \
 	  $(MAKE) CC=$(CC) LDFLAGS="-static" WITH_WGQUICK=no WITH_SYSTEMDUNITS=no WITH_BASHCOMPLETION=no
 	mkdir -p $(OUTDIR)
-	cp wireguard-tools-$(WG_VERSION)/src/wg $(OUTDIR)/wg
+	cp $(WG_DIR)/src/wg $(OUTDIR)/wg
 	$(TRIPLE)-strip $(OUTDIR)/wg
 	@echo "Built: $(OUTDIR)/wg ($$(file $(OUTDIR)/wg))"
 
 fetch:
-	@if [ ! -d wireguard-tools-$(WG_VERSION) ]; then \
-	  curl -L $(WG_URL) | tar -xJ; \
+	@if [ ! -d $(WG_DIR) ]; then \
+	  curl -fsSL $(WG_URL) | tar -xz; \
 	fi
 
 clean:
-	rm -rf wireguard-tools-$(WG_VERSION) $(OUTDIR)/wg build/
+	rm -rf $(WG_DIR) $(OUTDIR)/wg build/
 
 package: all
 	mkdir -p build
